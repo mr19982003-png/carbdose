@@ -954,10 +954,18 @@ body.dark-mode .quick-bs-field select, body.dark-mode .quick-bs-field input{back
               <div class="pd-field"><label>نسبة الكارب (%)</label><input type="number" id="pd-carb-percent" placeholder="45" min="20" max="70" value="45" oninput="calcCalories()"></div>
             </div>
             <div style="background:white;border-radius:8px;padding:10px;margin-top:10px;">
+              <div style="font-weight:700;color:#0d9488;margin-bottom:10px;font-size:.85rem;">🍽️ حساب نسبة الكربوهيدرات</div>
               <div class="pd-grid">
-                <div class="pd-field"><label>السعرات - الثبات</label><input type="number" id="pd-cal-maintain" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
-                <div class="pd-field"><label>السعرات - النزول</label><input type="number" id="pd-cal-deficit" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
-                <div class="pd-field"><label>الكربوهيدرات (غ)</label><input type="number" id="pd-carb-grams" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
+                <div class="pd-field"><label>احسب من</label><select id="pd-carb-base" onchange="calcCalories()" style="width:100%;padding:8px 11px;border:1.5px solid #e2e8f0;border-radius:9px;font-family:'Cairo',sans-serif;font-size:.88rem;"><option value="maintain" selected>السعرات - الثبات</option><option value="deficit">السعرات - النزول</option></select></div>
+                <div class="pd-field"><label>السعرات الأساسية</label><input type="number" id="pd-carb-base-val" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
+                <div class="pd-field"><label>النسبة (%)</label><input type="number" id="pd-carb-percent" placeholder="45" min="20" max="70" value="45" oninput="calcCalories()"></div>
+              </div>
+            </div>
+            <div style="background:white;border-radius:8px;padding:10px;margin-top:10px;">
+              <div class="pd-grid">
+                <div class="pd-field"><label>السعرات — الثبات (kcal)</label><input type="number" id="pd-cal-maintain" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
+                <div class="pd-field"><label>السعرات — النزول (kcal)</label><input type="number" id="pd-cal-deficit" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
+                <div class="pd-field"><label>الكربوهيدرات (غ/اليوم)</label><input type="number" id="pd-carb-grams" readonly style="background:#f0fdf4;cursor:not-allowed;"></div>
               </div>
             </div>
           </div>
@@ -1045,14 +1053,15 @@ body.dark-mode .quick-bs-field select, body.dark-mode .quick-bs-field input{back
 <div class="container">
 
 <div class="tabs">
-  <button class="tab active" onclick="showTab('profile',this)">👤 بيانات الحالة</button>
+  <button class="tab" onclick="showTab('profile',this)">👤 بيانات الحالة</button>
   <button class="tab" onclick="showMealsTab(this)">🍽️ الوجبات</button>
-  <button class="tab" onclick="showTab('insulin',this)">💉 الأنسولين</button>
+  <button class="tab" id="insulin-tab-btn" onclick="showTab('insulin',this)">💉 الأنسولين</button>
   <button class="tab" onclick="showTab('sugar',this)">🩸 قراءات السكر</button>
   <button class="tab" onclick="showTab('search',this)">🔍 بحث شامل</button>
   <button class="tab" onclick="showTab('custom-food',this)">➕ أصناف مخصصة</button>
   <button class="tab" onclick="showTab('weekly-report',this)">📊 تقرير شهري</button>
   <button class="tab" onclick="showTab('restaurants',this)">🍽️ مطاعم</button>
+  <button class="tab" onclick="openNutritionistsModal()" style="background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;border:none;cursor:pointer;">👨‍⚕️ استشارة</button>
   <button class="tab" id="tab-btn-patients" style="display:none" onclick="showTab('patients',this)">👥 الحالات</button>
   <button class="tab" onclick="showTab('info',this)">ℹ️ معلومات</button>
 </div>
@@ -2773,7 +2782,7 @@ const GRIDS={breakfast:'bg',main:'mg',fruits:'fg',nuts:'ng',veggies:'vg',fast:'f
 // ════════════════════════════════
 // STATE
 // ════════════════════════════════
-let profile={name:'',icr:0,target:120,isf:0,icrEvening:0,isfEvening:0};
+let profile={name:'',conditionType:'type1',icr:0,target:120,isf:0,icrEvening:0,isfEvening:0};
 
 // ════════════════════════════════
 // PRAYER TIME HELPERS (Fajr / Maghrib)
@@ -3017,6 +3026,7 @@ async function onPdPhoneChange() {
     document.getElementById('pd-age').value = '';
     document.getElementById('pd-activity').value = '1.55';
     document.getElementById('pd-carb-percent').value = '45';
+    document.getElementById('pd-carb-base').value = 'maintain';
     toggleType2Fields();
     return;
   }
@@ -3032,6 +3042,7 @@ async function onPdPhoneChange() {
     document.getElementById('pd-age').value = pd.age || '';
     document.getElementById('pd-activity').value = pd.activity || '1.55';
     document.getElementById('pd-carb-percent').value = pd.carbPercent || '45';
+    document.getElementById('pd-carb-base').value = pd.carbBase || 'maintain';
     document.getElementById('pd-cal-maintain').value = pd.dailyCalsMaintain || '';
     document.getElementById('pd-cal-deficit').value = pd.dailyCalsDeficit || '';
     document.getElementById('pd-carb-grams').value = pd.dailyCarbGrams || '';
@@ -3067,6 +3078,7 @@ async function adminSavePatientData() {
       pObj.age = parseFloat(document.getElementById('pd-age').value) || 0;
       pObj.activity = parseFloat(document.getElementById('pd-activity').value) || 1.55;
       pObj.carbPercent = parseFloat(document.getElementById('pd-carb-percent').value) || 45;
+      pObj.carbBase = document.getElementById('pd-carb-base').value || 'maintain';
       pObj.dailyCalsMaintain = parseFloat(document.getElementById('pd-cal-maintain').value) || 0;
       pObj.dailyCalsDeficit = parseFloat(document.getElementById('pd-cal-deficit').value) || 0;
       pObj.dailyCarbGrams = parseFloat(document.getElementById('pd-carb-grams').value) || 0;
@@ -3152,11 +3164,15 @@ async function autoLoadPatientProfile(phone) {
 
     // ملء البيانات
     profile.name       = pd.name       || profile.name;
+    profile.conditionType = pd.conditionType || 'type1';
     profile.icr        = pd.icr        || 0;
     profile.target     = pd.target     || 120;
     profile.isf        = pd.isf        || 0;
     profile.icrEvening = pd.icrEvening || 0;
     profile.isfEvening = pd.isfEvening || 0;
+
+    // إخفاء تبويب الأنسولين إذا كانت الحالة من النوع الثاني
+    toggleInsulinTabForPatient(profile.conditionType);
 
     // تحديث الحقول (مقفولة للقراءة فقط)
     const setVal = (id, v) => { const el=document.getElementById(id); if(el) el.value=v||''; };
@@ -7102,9 +7118,26 @@ function toggleType2Fields() {
   if (type === 'type2') {
     type2.style.display = 'grid';
     type1.style.display = 'none';
+    // إخفاء تبويب الأنسولين للنوع الثاني
+    const insulinTab = document.getElementById('insulin-tab-btn');
+    if (insulinTab) insulinTab.style.display = 'none';
   } else {
     type2.style.display = 'none';
     type1.style.display = 'grid';
+    // إظهار تبويب الأنسولين للنوع الأول
+    const insulinTab = document.getElementById('insulin-tab-btn');
+    if (insulinTab) insulinTab.style.display = 'block';
+  }
+}
+
+function toggleInsulinTabForPatient(conditionType) {
+  const insulinTab = document.getElementById('insulin-tab-btn');
+  if (!insulinTab) return;
+  
+  if (conditionType === 'type2') {
+    insulinTab.style.display = 'none';
+  } else {
+    insulinTab.style.display = 'block';
   }
 }
 
@@ -7114,10 +7147,12 @@ function calcCalories() {
   const a = parseFloat(document.getElementById('pd-age').value);
   const act = parseFloat(document.getElementById('pd-activity').value) || 1.55;
   const carb = parseFloat(document.getElementById('pd-carb-percent').value) || 45;
+  const base = document.getElementById('pd-carb-base').value;
   
   if (!w || !h || !a) {
     document.getElementById('pd-cal-maintain').value = '';
     document.getElementById('pd-cal-deficit').value = '';
+    document.getElementById('pd-carb-base-val').value = '';
     document.getElementById('pd-carb-grams').value = '';
     return;
   }
@@ -7126,13 +7161,108 @@ function calcCalories() {
   const tdee = Math.round(bmr * act);
   const maintain = tdee;
   const deficit = Math.max(tdee - 500, 1200);
-  const carbGrams = Math.round((maintain * (carb / 100)) / 4);
+  
+  // اختيار الأساس للكربوهيدرات
+  let baseVal = base === 'deficit' ? deficit : maintain;
+  let carbGrams = Math.round((baseVal * (carb / 100)) / 4);
   
   document.getElementById('pd-cal-maintain').value = maintain;
   document.getElementById('pd-cal-deficit').value = deficit;
+  document.getElementById('pd-carb-base-val').value = baseVal;
   document.getElementById('pd-carb-grams').value = carbGrams;
 }
 
+// ════════════════════════════════
+// اختصاصيي التغذية
+// ════════════════════════════════
+function openNutritionistsModal() {
+  document.getElementById('nutritionists-overlay').style.display = 'flex';
+}
+
+function closeNutritionistsModal() {
+  document.getElementById('nutritionists-overlay').style.display = 'none';
+}
+
+function openWhatsApp(phone) {
+  // إزالة الأصفار الإضافية وتنسيق رقم الهاتف
+  let cleanPhone = phone.replace(/^00/, '').replace(/^0/, '');
+  // إنشاء رابط واتس اب
+  window.open(`https://wa.me/${cleanPhone}`, '_blank');
+  closeNutritionistsModal();
+}
+
 </script>
-</body>
+
+<!-- نافذة منبثقة لاختصاصيي التغذية -->
+<div id="nutritionists-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:9999;backdrop-filter:blur(3px);padding:20px;overflow:auto;align-items:center;justify-content:center;flex-direction:column;">
+  <div style="background:white;border-radius:15px;padding:20px;max-width:500px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2 style="margin:0;color:#0d9488;font-size:1.3rem;font-family:'Cairo',sans-serif;">👨‍⚕️ اختصاصيي التغذية</h2>
+      <button onclick="closeNutritionistsModal()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:#94a3b8;padding:0;width:auto;height:auto;">✕</button>
+    </div>
+    
+    <div style="max-height:600px;overflow-y:auto;">
+      <div class="nutritionist-item" onclick="openWhatsApp('00218926553884')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.محمد طارق</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218926553884</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218913488477')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.عبدالرحمن الزيات</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218913488477</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218923017154')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.ندى القريض</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218923017154</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218918075274')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.فاطمة اجويلي</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218918075274</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218918216968')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.فاطمة الزهراء</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218918216968</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218923139194')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.مريم الرشراش</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218923139194</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218914502003')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.رندا الزروق</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218914502003</div>
+      </div>
+      
+      <div class="nutritionist-item" onclick="openWhatsApp('00218922338367')">
+        <div style="font-weight:700;color:#0d9488;margin-bottom:5px;">أ.فاطمة لياس</div>
+        <div style="font-size:.85rem;color:#64748b;margin-bottom:10px;direction:ltr;">+218922338367</div>
+      </div>
+    </div>
+    
+    <div style="margin-top:15px;padding-top:15px;border-top:1px solid #e2e8f0;text-align:center;font-size:.8rem;color:#94a3b8;">
+      اختر الاختصاصي وسيتم فتح واتس اب مباشرة
+    </div>
+  </div>
+</div>
+
+<style>
+.nutritionist-item {
+  background:#f0fdfa;
+  border:1.5px solid #99f6e4;
+  border-radius:10px;
+  padding:12px;
+  margin-bottom:10px;
+  cursor:pointer;
+  transition:all .2s;
+}
+.nutritionist-item:hover {
+  background:#e0fdf9;
+  border-color:#14b8a6;
+  transform:translateX(-5px);
+}
+</style>
 </html>
