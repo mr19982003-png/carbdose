@@ -11,12 +11,15 @@
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --teal:#0d9488;--teal-dark:#0f766e;--teal-light:#99f6e4;--teal-pale:#f0fdfa;
+  --teal:#0ea5e9;--teal-dark:#0284c7;--teal-light:#7dd3fc;--teal-pale:#f0f9ff;
+  --primary:#0ea5e9;--primary-dark:#0284c7;--primary-light:#7dd3fc;--primary-pale:#f0f9ff;
+  --secondary:#06b6d4;
   --amber:#f59e0b;--amber-pale:#fffbeb;
-  --blue:#3b82f6;--blue-pale:#eff6ff;
+  --blue:#0ea5e9;--blue-pale:#f0f9ff;
   --purple:#8b5cf6;--purple-pale:#f5f3ff;
   --red:#ef4444;--red-pale:#fef2f2;
   --green:#22c55e;--green-pale:#f0fdf4;
+  --white:#ffffff;--light:#f8fafc;
   --text-dark:#1c1917;--text-mid:#44403c;--text-light:#78716c;
   --border:#e2e8f0;--bg:#f8fafc;--card:#ffffff;
 }
@@ -761,6 +764,11 @@ body.dark-mode .quick-bs-field select, body.dark-mode .quick-bs-field input{back
 </head>
 <body>
 
+<!-- شريط الجملة التحفيزية اليومية -->
+<div id="daily-motivation-banner" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4);color:white;padding:12px 20px;text-align:center;font-family:'Cairo',sans-serif;font-weight:600;font-size:.9rem;box-shadow:0 2px 8px rgba(14,165,233,.2);border-bottom:2px solid #0284c7;">
+  <span>💪 </span><span id="daily-motivation-text">أنت أقوى مما تتخيل!</span>
+</div>
+
 <!-- PATIENT FILE OVERLAY -->
 <div class="pt-file-overlay" id="pt-file-overlay">
   <div class="pt-file-box">
@@ -940,7 +948,7 @@ body.dark-mode .quick-bs-field select, body.dark-mode .quick-bs-field input{back
           </div>
           <div class="pd-grid">
             <div class="pd-field"><label>اسم الحالة</label><input type="text" id="pd-name" placeholder="مثال: محمد علي"></div>
-            <div class="pd-field"><label>🏥 نوع الحالة</label><select id="pd-condition-type" onchange="toggleType2Fields()" style="width:100%;padding:8px 11px;border:1.5px solid #e2e8f0;border-radius:9px;font-family:'Cairo',sans-serif;font-size:.88rem;"><option value="type1">السكري النوع الأول</option><option value="type2">السكري النوع الثاني</option></select></div>
+            <div class="pd-field"><label>🏥 نوع الحالة</label><select id="pd-condition-type" onchange="toggleType2Fields()" style="width:100%;padding:8px 11px;border:1.5px solid #e2e8f0;border-radius:9px;font-family:'Cairo',sans-serif;font-size:.88rem;"><option value="type1">السكري النوع الأول</option><option value="type2">السكري النوع الثاني</option><option value="insulin-resistance">💊 مقاومة الانسولين</option></select></div>
           </div>
 
           <!-- حقول السكري النوع الثاني -->
@@ -3036,7 +3044,7 @@ async function onPdPhoneChange() {
   const cType = pd.conditionType || 'type1';
   document.getElementById('pd-condition-type').value = cType;
   
-  if (cType === 'type2') {
+  if (cType === 'type2' || cType === 'insulin-resistance') {
     document.getElementById('pd-weight').value = pd.weight || '';
     document.getElementById('pd-height').value = pd.height || '';
     document.getElementById('pd-age').value = pd.age || '';
@@ -3072,7 +3080,7 @@ async function adminSavePatientData() {
     const patientData = await getPatientData();
     let pObj = { name, conditionType: condType, updatedAt: Date.now() };
     
-    if (condType === 'type2') {
+    if (condType === 'type2' || condType === 'insulin-resistance') {
       pObj.weight = parseFloat(document.getElementById('pd-weight').value) || 0;
       pObj.height = parseFloat(document.getElementById('pd-height').value) || 0;
       pObj.age = parseFloat(document.getElementById('pd-age').value) || 0;
@@ -3127,10 +3135,10 @@ function renderPdList(patientData, approved) {
       <th style="padding:6px 8px;border-bottom:2px solid #bbf7d0;"></th>
     </tr></thead>
     <tbody>${entries.map(([ph, pd]) => `
-      <tr style="background:${pd.conditionType === 'type2' ? '#f0fdfa' : 'white'};">
+      <tr style="background:${pd.conditionType === 'type2' || pd.conditionType === 'insulin-resistance' ? '#f0f9ff' : 'white'};">
         <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;direction:ltr;font-weight:600;font-size:.7rem;">${ph}</td>
         <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;font-weight:700;">${pd.name||'—'}</td>
-        <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;text-align:center;font-size:.7rem;">${pd.conditionType === 'type2' ? '🩺 النوع الثاني' : '🩹 النوع الأول'}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;text-align:center;font-size:.7rem;">${pd.conditionType === 'type2' ? '🩺 النوع الثاني' : pd.conditionType === 'insulin-resistance' ? '💊 مقاومة الانسولين' : '🩹 النوع الأول'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;text-align:center;">${pd.icr||'—'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;text-align:center;">${pd.target||'—'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid #f0fdf4;text-align:center;">${pd.isf||'—'}</td>
@@ -3160,7 +3168,7 @@ async function autoLoadPatientProfile(phone) {
     const normalized = normalizePhone(phone);
     // ابحث بالرقم الأصلي أو المُنظَّم
     const pd = patientData[normalized] || patientData[phone] || null;
-    if (!pd || (!pd.icr && !pd.isf)) return; // لا توجد بيانات لهذه الحالة بعد
+    if (!pd) return; // لا توجد بيانات لهذه الحالة بعد
 
     // ملء البيانات
     profile.name       = pd.name       || profile.name;
@@ -3171,7 +3179,7 @@ async function autoLoadPatientProfile(phone) {
     profile.icrEvening = pd.icrEvening || 0;
     profile.isfEvening = pd.isfEvening || 0;
 
-    // إخفاء تبويب الأنسولين إذا كانت الحالة من النوع الثاني
+    // إخفاء تبويب الأنسولين للنوع الثاني ومقاومة الانسولين
     toggleInsulinTabForPatient(profile.conditionType);
 
     // تحديث الحقول (مقفولة للقراءة فقط)
@@ -7115,16 +7123,16 @@ function toggleType2Fields() {
   const type2 = document.getElementById('pd-type2-fields');
   const type1 = document.getElementById('pd-type1-fields');
   
-  if (type === 'type2') {
+  if (type === 'type2' || type === 'insulin-resistance') {
     type2.style.display = 'grid';
     type1.style.display = 'none';
-    // إخفاء تبويب الأنسولين للنوع الثاني
+    // إخفاء تبويب الأنسولين
     const insulinTab = document.getElementById('insulin-tab-btn');
     if (insulinTab) insulinTab.style.display = 'none';
   } else {
     type2.style.display = 'none';
     type1.style.display = 'grid';
-    // إظهار تبويب الأنسولين للنوع الأول
+    // إظهار تبويب الأنسولين
     const insulinTab = document.getElementById('insulin-tab-btn');
     if (insulinTab) insulinTab.style.display = 'block';
   }
@@ -7134,7 +7142,7 @@ function toggleInsulinTabForPatient(conditionType) {
   const insulinTab = document.getElementById('insulin-tab-btn');
   if (!insulinTab) return;
   
-  if (conditionType === 'type2') {
+  if (conditionType === 'type2' || conditionType === 'insulin-resistance') {
     insulinTab.style.display = 'none';
   } else {
     insulinTab.style.display = 'block';
@@ -7190,6 +7198,50 @@ function openWhatsApp(phone) {
   window.open(`https://wa.me/${cleanPhone}`, '_blank');
   closeNutritionistsModal();
 }
+
+// ════════════════════════════════════════
+// الجمل التحفيزية اليومية
+// ════════════════════════════════════════
+const DAILY_MOTIVATIONS = [
+  "💪 أنت أقوى مما تتخيل! كل يوم خطوة نحو الصحة",
+  "🌟 صحتك هي ثروتك الحقيقية - استثمر فيها اليوم",
+  "🎯 كل وجبة صحيحة تقربك من أهدافك",
+  "✨ أنت لست وحدك - آلاف الناس معك في هذه الرحلة",
+  "🏆 النجاح يبدأ بقرار واحد اليوم",
+  "💝 حب نفسك وخذ خطوات صغيرة نحو التحسن",
+  "🌈 كل يوم فرصة جديدة للبدء من جديد",
+  "⭐ أنت تستحق حياة صحية وسعيدة",
+  "🚀 التغيير الكبير يبدأ من قرار صغير",
+  "❤️ صحتك مهمة - لا تتردد في طلب المساعدة",
+  "🎉 احتفل بكل نجاح صغير في رحلتك",
+  "🔥 أنت قادر على تحقيق أي شيء تريده",
+  "🌺 كل يوم هو فرصة للعناية بنفسك",
+  "💎 قيمتك لا تُقاس بأرقام - أنت مميز",
+  "🌸 الصبر والمثابرة سيأتيان بالنتائج",
+  "🎊 استمتع برحلتك نحو الصحة والعافية",
+  "🏅 أنت بطل في رحلتك الشخصية",
+  "✊ لا تستسلم - أفضل نتيجة قادمة",
+  "🌙 كل ليلة تنم عليها بسلام تقريبك من هدفك",
+  "☀️ كل صباح جديد فرصة جديدة للنجاح"
+];
+
+function getRandomMotivation() {
+  // استخدام تاريخ اليوم كـ seed لاختيار نفس الجملة طول اليوم
+  const today = new Date().toDateString();
+  const hash = today.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+  const index = hash % DAILY_MOTIVATIONS.length;
+  return DAILY_MOTIVATIONS[index];
+}
+
+function initDailyMotivation() {
+  const motivationEl = document.getElementById('daily-motivation-text');
+  if (motivationEl) {
+    motivationEl.textContent = getRandomMotivation();
+  }
+}
+
+// استدعاء الدالة عند تحميل الصفحة
+window.addEventListener('load', initDailyMotivation);
 
 </script>
 
