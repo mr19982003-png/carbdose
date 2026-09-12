@@ -405,6 +405,7 @@ footer{text-align:center;padding:18px;font-size:.76rem;color:var(--text-light);b
   animation:gateIn .4s cubic-bezier(.34,1.56,.64,1);
 }
 @keyframes gateIn{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
 .gate-logo{font-size:3rem;margin-bottom:8px;}
 .gate-title{font-family:'Tajawal',sans-serif;font-size:1.5rem;font-weight:800;color:#1e40af;margin-bottom:4px;}
 .gate-sub{font-size:.83rem;color:#64748b;margin-bottom:28px;line-height:1.6;}
@@ -1683,7 +1684,7 @@ body.dark-mode .quick-bs-field select, body.dark-mode .quick-bs-field input{back
       <div class="bs-history-hdr">
         📊 السجل الموحد — القراءات والوجبات والجرعات
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="bs-clear-btn" onclick="loadSugarHistory()" style="font-size:.74rem;padding:5px 12px;">🔄 تحديث</button>
+          <button class="bs-clear-btn" onclick="_clearHCache(profile.name);loadSugarHistory(true)" style="font-size:.74rem;padding:5px 12px;">🔄 تحديث</button>
           <button class="pdf-export-btn" onclick="exportSugarPDF()">📄 تصدير PDF</button>
         </div>
       </div>
@@ -3242,6 +3243,8 @@ async function autoLoadPatientProfile(phone) {
     localStorage.setItem('carb_profile', JSON.stringify(profile));
     // للنوع الثاني ومقاومة الانسولين: تحميل كارب اليوم فوراً
     if(profile.conditionType==='type2'||profile.conditionType==='insulin-resistance') loadTodayCarbs();
+    // تحميل مسبق للسجل في الخلفية (يُسرّع فتح تبويب القراءات لاحقاً)
+    setTimeout(_preloadSugarHistory, 800);
   } catch(e) { /* تجاهل إذا فشل الجلب */ }
 }
 
@@ -3763,6 +3766,8 @@ async function initCounter(){
       if(p.dailyCarbGrams) profile.dailyCarbGrams=p.dailyCarbGrams;
       refreshBanners(); fillProfileFields();
       if(profile.conditionType==='type2'||profile.conditionType==='insulin-resistance') loadTodayCarbs();
+      // تحميل مسبق في الخلفية بعد 1.5 ثانية من تهيئة التطبيق
+      setTimeout(_preloadSugarHistory, 1500);
     }catch(e){}
   }
   // 🔒 تطبيق القفل بعد تحميل البيانات
@@ -4120,7 +4125,7 @@ async function saveSugarReadings(){
       ), 600);
     }
 
-    loadSugarHistory();
+    _clearHCache(profile.name); loadSugarHistory(true);
   }catch(e){
     if(statusEl){statusEl.style.display='block';statusEl.style.color='#b91c1c';statusEl.textContent='❌ خطأ في الحفظ، حاول مرة أخرى';}
     setTimeout(()=>{if(statusEl)statusEl.style.display='none';},2500);
@@ -4186,7 +4191,7 @@ async function quickSaveSugarReading(){
       const inp=document.getElementById('bs-'+fieldId);
       if(inp){inp.value=val;updateSugarStatus(fieldId,val);}
     }
-    loadSugarHistory();
+    _clearHCache(profile.name); loadSugarHistory(true);
     checkSugarAlerts();
   }catch(e){showStatus('❌ خطأ في الحفظ، حاول مرة أخرى',false);}
 }
@@ -4259,75 +4264,165 @@ function bsVal(v){
 
 async function deleteSugarRow(key){
   if(!confirm('هل تريد حذف قراءات هذا اليوم؟'))return;
-  try{await window.storage.delete(key);loadSugarHistory();}catch(e){}
+  try{await window.storage.delete(key);_clearHCache(profile.name);loadSugarHistory(true);}catch(e){}
 }
 
-async function loadSugarHistory(){
+// ═══════════════════════════════════════════════════════════
+//  سجل القراءات — نسخة محسّنة
+//  • تحميل متوازٍ (Promise.all) بدل Sequential await
+//  • كاش localStorage مع TTL دقيقتان
+//  • عرض فوري من الكاش ثم تحديث خفي في الخلفية
+//  • pre-load تلقائي عند دخول المريض
+// ═══════════════════════════════════════════════════════════
+
+const _HCACHE_TTL = 2 * 60 * 1000; // دقيقتان
+
+function _safeName(n){ return (n||'unknown').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g,'_').slice(0,30); }
+function _hcKey(n){ return 'hc2_'+_safeName(n); }
+
+function _writeHCache(name,rows){
+  try{ localStorage.setItem(_hcKey(name), JSON.stringify({rows,ts:Date.now()})); }catch(e){}
+}
+function _readHCache(name){
+  try{
+    const raw=localStorage.getItem(_hcKey(name));
+    if(!raw) return null;
+    const {rows,ts}=JSON.parse(raw);
+    return (Date.now()-ts < _HCACHE_TTL) ? rows : null;
+  }catch(e){ return null; }
+}
+function _clearHCache(name){ try{ localStorage.removeItem(_hcKey(name)); }catch(e){} }
+
+async function _fetchSugarRows(myName){
+  const sn = _safeName(myName);
+  const keysRes = await window.storage.list('sugar:');
+  if(!keysRes||!keysRes.keys||!keysRes.keys.length) return [];
+
+  // فلترة مفاتيح هذه الحالة فقط — يتجنب جلب بيانات مرضى آخرين
+  const myKeys = keysRes.keys.filter(k=>{
+    const parts=k.split(':');
+    // key format: sugar:DATE:SAFENAME (SAFENAME قد يحتوي على : )
+    return parts.length>=3 && parts.slice(2).join(':'===sn || k.endsWith(':'+sn));
+  });
+  // fallback: إذا فشل الفلتر (اسم غير عادي) نستخدم كل المفاتيح
+  const targetKeys = myKeys.length ? myKeys : keysRes.keys;
+
+  // ✅ تحميل متوازٍ — كل الطلبات تُرسل في آنٍ واحد
+  const results = await Promise.all(
+    targetKeys.map(k => window.storage.get(k).catch(()=>null))
+  );
+
+  const rows=[];
+  results.forEach((r,i)=>{
+    if(r&&r.value){
+      try{
+        const d=JSON.parse(r.value);
+        if(d.name===myName) rows.push({key:targetKeys[i],data:d});
+      }catch(e){}
+    }
+  });
+  rows.sort((a,b)=>(b.data.date||'').localeCompare(a.data.date||''));
+  return rows;
+}
+
+function _renderSugarRows(rows,tbody){
+  if(!rows||!rows.length){
+    tbody.innerHTML='<tr><td colspan="13" class="bs-empty">لا توجد قراءات مسجّلة لهذه الحالة بعد</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rows.map(({key,data})=>{
+    const r=data.readings||{};
+    const m=data.meals||{};
+    const safeKey=key.replace(/"/g,'&quot;');
+    function mealCell(mx){
+      const md=m[mx]||{};
+      const parts=[];
+      if(md.desc)  parts.push('<span style="font-weight:600;color:#065f46">'+md.desc+'</span>');
+      if(md.carbs) parts.push('<span style="color:var(--primary-dark)">'+md.carbs+' جرام</span>');
+      if(md.dose)  parts.push('<span style="color:#5b21b6;font-weight:700">💉 '+md.dose+' و.</span>');
+      return parts.length?'<div style="font-size:.7rem;line-height:1.6;">'+parts.join('<br>')+'</div>':'<span style="color:#d1d5db">—</span>';
+    }
+    function snackCell(){
+      const snacks=m.snacks||[];
+      if(!snacks.length) return '<span style="color:#d1d5db">—</span>';
+      return snacks.map(s=>`<div style="font-size:.68rem;background:#fdf4ff;border-radius:6px;padding:3px 6px;margin-bottom:3px;color:#5b21b6;line-height:1.5;">${s.desc||'—'}<br><span style="color:var(--primary-dark)">${s.carbs}ج</span> · <b>💉${s.dose}و.</b></div>`).join('');
+    }
+    return`<tr>
+      <td style="font-weight:700;color:#374151;white-space:nowrap;">${data.date||'—'}</td>
+      <td>${bsVal(r['bf-before'])}</td>
+      <td style="background:#f0fdf4;vertical-align:top;">${mealCell('bf')}</td>
+      <td>${bsVal(r['bf-after'])}</td>
+      <td>${bsVal(r['lu-before'])}</td>
+      <td style="background:#f0fdf4;vertical-align:top;">${mealCell('lu')}</td>
+      <td>${bsVal(r['lu-after'])}</td>
+      <td>${bsVal(r['di-before'])}</td>
+      <td style="background:#f0fdf4;vertical-align:top;">${mealCell('di')}</td>
+      <td>${bsVal(r['di-after'])}</td>
+      <td>${bsVal(r['bed'])}</td>
+      <td style="background:#fdf4ff;vertical-align:top;">${snackCell()}</td>
+      <td><button class="bs-del-row" onclick="deleteSugarRow('${safeKey}')">🗑️</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadSugarHistory(forceRefresh){
   const tbody=document.getElementById('bs-history-body');
-  if(!tbody)return;
+  if(!tbody) return;
   const myName=(profile.name||'').trim();
   if(!myName){
     tbody.innerHTML='<tr><td colspan="13" class="bs-empty">⚠️ يرجى تحميل بيانات الحالة أولاً لعرض سجلها</td></tr>';
     return;
   }
-  tbody.innerHTML='<tr><td colspan="13" class="bs-empty">جارٍ التحميل...</td></tr>';
-  try{
-    const keysRes=await window.storage.list('sugar:');
-    if(!keysRes||!keysRes.keys||keysRes.keys.length===0){
-      tbody.innerHTML='<tr><td colspan="13" class="bs-empty">لا توجد قراءات محفوظة بعد</td></tr>';
+
+  // ① عرض الكاش فوراً (صفر تأخير)
+  if(!forceRefresh){
+    const cached=_readHCache(myName);
+    if(cached){
+      _renderSugarRows(cached,tbody);
+      // تحديث صامت في الخلفية
+      setTimeout(()=>_bgRefreshHistory(myName,tbody),400);
       return;
     }
-    const rows=[];
-    for(const key of keysRes.keys){
-      try{
-        const r=await window.storage.get(key);
-        if(r&&r.value){
-          const d=JSON.parse(r.value);
-          if(d.name===myName) rows.push({key,data:d});
-        }
-      }catch(e){}
-    }
-    if(rows.length===0){
-      tbody.innerHTML='<tr><td colspan="13" class="bs-empty">لا توجد قراءات مسجّلة لهذه الحالة بعد</td></tr>';
-      return;
-    }
-    rows.sort((a,b)=>(b.data.date||'').localeCompare(a.data.date||''));
-    tbody.innerHTML=rows.map(({key,data})=>{
-      const r=data.readings||{};
-      const m=data.meals||{};
-      const safeKey=key.replace(/"/g,'&quot;');
-      function mealCell(mx){
-        const md=m[mx]||{};
-        const parts=[];
-        if(md.desc) parts.push('<span style="font-weight:600;color:#065f46">'+md.desc+'</span>');
-        if(md.carbs) parts.push('<span style="color:var(--primary-dark)">'+md.carbs+' جرام</span>');
-        if(md.dose) parts.push('<span style="color:#5b21b6;font-weight:700">💉 '+md.dose+' و.</span>');
-        return parts.length?'<div style="font-size:.7rem;line-height:1.6;">'+parts.join('<br>')+'</div>':'<span style="color:#d1d5db">—</span>';
-      }
-      function snackCell(){
-        const snacks=m.snacks||[];
-        if(!snacks.length) return '<span style="color:#d1d5db">—</span>';
-        return snacks.map(s=>`<div style="font-size:.68rem;background:#fdf4ff;border-radius:6px;padding:3px 6px;margin-bottom:3px;color:#5b21b6;line-height:1.5;">${s.desc||'—'}<br><span style="color:var(--primary-dark)">${s.carbs}ج</span> · <b>💉${s.dose}و.</b></div>`).join('');
-      }
-      return`<tr>
-        <td style="font-weight:700;color:#374151;white-space:nowrap;">${data.date||'—'}</td>
-        <td>${bsVal(r['bf-before'])}</td>
-        <td style="background:#f0fdf4;vertical-align:top;">${mealCell('bf')}</td>
-        <td>${bsVal(r['bf-after'])}</td>
-        <td>${bsVal(r['lu-before'])}</td>
-        <td style="background:#f0fdf4;vertical-align:top;">${mealCell('lu')}</td>
-        <td>${bsVal(r['lu-after'])}</td>
-        <td>${bsVal(r['di-before'])}</td>
-        <td style="background:#f0fdf4;vertical-align:top;">${mealCell('di')}</td>
-        <td>${bsVal(r['di-after'])}</td>
-        <td>${bsVal(r['bed'])}</td>
-        <td style="background:#fdf4ff;vertical-align:top;">${snackCell()}</td>
-        <td><button class="bs-del-row" onclick="deleteSugarRow('${safeKey}')">🗑️</button></td>
-      </tr>`;
-    }).join('');
-  }catch(e){
-    tbody.innerHTML='<tr><td colspan="13" class="bs-empty">تعذّر تحميل السجل</td></tr>';
   }
+
+  // ② لا كاش — عرض spinner أنيق ثم جلب البيانات
+  tbody.innerHTML=`<tr><td colspan="13" style="padding:28px;text-align:center;">
+    <div style="display:inline-flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="width:32px;height:32px;border:3px solid var(--blue-100);border-top-color:var(--primary);border-radius:50%;animation:spin .65s linear infinite;"></div>
+      <span style="font-size:.8rem;color:var(--text-light);font-weight:600;">جارٍ تحميل السجل...</span>
+    </div>
+  </td></tr>`;
+
+  try{
+    const rows=await _fetchSugarRows(myName);
+    _writeHCache(myName,rows);
+    _renderSugarRows(rows,tbody);
+  }catch(e){
+    tbody.innerHTML='<tr><td colspan="13" class="bs-empty">تعذّر تحميل السجل — حاول مرة أخرى</td></tr>';
+  }
+}
+
+// تحديث صامت في الخلفية (لا يُظهر spinner)
+async function _bgRefreshHistory(myName,tbody){
+  try{
+    const rows=await _fetchSugarRows(myName);
+    _writeHCache(myName,rows);
+    // تحديث الجدول فقط إذا تغيّرت البيانات
+    const oldCount=tbody.querySelectorAll('tr').length;
+    if(rows.length!==oldCount-0) _renderSugarRows(rows,tbody);
+    else _renderSugarRows(rows,tbody); // دائماً نحدّث للتأكد
+  }catch(e){}
+}
+
+// تحميل مسبق في الخلفية مباشرة بعد الدخول
+function _preloadSugarHistory(){
+  const myName=(profile.name||'').trim();
+  if(!myName) return;
+  // مسح الكاش القديم وتحميل من جديد
+  _clearHCache(myName);
+  _fetchSugarRows(myName).then(rows=>{
+    _writeHCache(myName,rows);
+  }).catch(()=>{});
 }
 
 
@@ -4924,9 +5019,10 @@ async function saveToSugarLog(silent){
       if(carbsEl) carbsEl.value=totalCarbs;
       if(doseEl)  doseEl.value=units;
     }
-    loadSugarHistory();
+    // إبطال الكاش وتحديث السجل
+    _clearHCache(profile.name);
+    loadSugarHistory(true);
 
-    // تحديث كارب اليوم فوراً بعد الحفظ
     if(isType2) await loadTodayCarbs();
 
     if(silent){
@@ -5253,7 +5349,7 @@ function showTab(name,btn){
       else{notice.style.display='none';}
     }
     loadSugarReadings();
-    loadSugarHistory();
+    loadSugarHistory(); // يعرض من الكاش فوراً ويُحدّث في الخلفية
     checkSugarAlerts();
     setTimeout(renderSugarChart,300);
   }
