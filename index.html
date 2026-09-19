@@ -4409,17 +4409,142 @@ window.addEventListener('beforeinstallprompt',e=>{
   if(btn)btn.style.display='block';
 });
 function installPWA(){
-  if(deferredPWAPrompt){deferredPWAPrompt.prompt();}
-  else{alert('لتثبيت التطبيق:\n1. افتح القائمة في المتصفح\n2. اختر "إضافة إلى الشاشة الرئيسية"');}
+  if(deferredPWAPrompt){
+    deferredPWAPrompt.prompt();
+    deferredPWAPrompt.userChoice.then(r=>{
+      if(r.outcome==='accepted'){
+        const btn=document.getElementById('pwa-install-btn');
+        if(btn)btn.style.display='none';
+        deferredPWAPrompt=null;
+      }
+    });
+  } else {
+    const ua=navigator.userAgent;
+    if(/iPhone|iPad/i.test(ua))
+      alert('لتثبيت كارب حاسب على iPhone/iPad:\n\n1. اضغط أيقونة المشاركة ⬆️\n2. اختر "إضافة إلى الشاشة الرئيسية"\n3. اضغط "إضافة"');
+    else
+      alert('لتثبيت كارب حاسب:\n\n1. افتح قائمة المتصفح ⋮\n2. اختر "إضافة إلى الشاشة الرئيسية"');
+  }
 }
 
-// Generate PWA manifest dynamically
+// ══════════════════════════════════════
+//  PWA — Manifest + Service Worker
+// ══════════════════════════════════════
 (function(){
-  const manifest={name:'حساب الكربوهيدرات',short_name:'كارب حاسب',start_url:'./',display:'standalone',background_color:'#2563eb',theme_color:'#2563eb',icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🥗</text></svg>',sizes:'192x192',type:'image/svg+xml'}]};
-  const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const link=document.getElementById('pwa-manifest');
-  if(link)link.href=url;
+  // 1️⃣ Manifest محسّن مع أيقونات SVG متعددة
+  const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#2563eb"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="110">💉</text><text x="50%" y="82%" dominant-baseline="middle" text-anchor="middle" font-size="30" fill="rgba(255,255,255,.85)" font-family="Arial">كارب حاسب</text></svg>`;
+  const iconUrl = 'data:image/svg+xml,' + encodeURIComponent(iconSvg);
+
+  const manifest = {
+    name: 'كارب حاسب — حساب الكربوهيدرات',
+    short_name: 'كارب حاسب',
+    description: 'تطبيق طبي لحساب الكربوهيدرات وجرعات الأنسولين لمرضى السكري',
+    start_url: './',
+    display: 'standalone',
+    orientation: 'portrait-primary',
+    background_color: '#2563eb',
+    theme_color: '#2563eb',
+    lang: 'ar',
+    dir: 'rtl',
+    categories: ['medical', 'health', 'food'],
+    icons: [
+      { src: iconUrl, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: iconUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' }
+    ],
+    screenshots: [],
+    shortcuts: [
+      { name: 'حساب وجبة جديدة', short_name: 'وجبة', url: './#meals', icons: [{ src: iconUrl, sizes: '192x192' }] },
+      { name: 'تسجيل قراءة سكر', short_name: 'سكر', url: './#sugar', icons: [{ src: iconUrl, sizes: '192x192' }] }
+    ]
+  };
+
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.getElementById('pwa-manifest');
+  if (link) link.href = url;
+
+  // 2️⃣ Service Worker — تسجيل من blob (single-file trick)
+  if ('serviceWorker' in navigator) {
+    const swCode = `
+const CACHE = 'carbdose-v2';
+const OFFLINE_URLS = [self.location.href];
+
+// Install: cache الصفحة الحالية
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(CACHE).then(cache =>
+      cache.addAll(OFFLINE_URLS)
+    ).then(() => self.skipWaiting())
+  );
+});
+
+// Activate: حذف الكاش القديم
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+// Fetch: Network-first مع fallback للكاش
+self.addEventListener('fetch', e => {
+  // تجاهل Firebase / non-GET
+  if (e.request.method !== 'GET') return;
+  if (e.request.url.includes('firestore') || e.request.url.includes('googleapis')) return;
+
+  e.respondWith(
+    fetch(e.request)
+      .then(res => {
+        // كاش ناجح — خزّن نسخة محدّثة
+        if (res && res.status === 200 && res.type !== 'opaque') {
+          const clone = res.clone();
+          caches.open(CACHE).then(cache => cache.put(e.request, clone));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request).then(cached => {
+        if (cached) return cached;
+        // Offline fallback: صفحة بسيطة بالعربي
+        return new Response(
+          \`<!DOCTYPE html><html lang="ar" dir="rtl">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>كارب حاسب — غير متصل</title>
+<style>body{font-family:Cairo,sans-serif;background:#eff6ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{background:white;border-radius:20px;padding:40px 32px;text-align:center;max-width:320px;box-shadow:0 8px 32px rgba(37,99,235,.15)}
+h2{color:#2563eb;font-size:1.4rem;margin-bottom:10px}p{color:#6b7280;font-size:.9rem;line-height:1.7}
+button{background:#2563eb;color:white;border:none;padding:12px 28px;border-radius:10px;font-family:Cairo,sans-serif;font-size:.9rem;cursor:pointer;margin-top:16px}
+</style></head>
+<body><div class="box">
+<div style="font-size:3rem">📡</div>
+<h2>لا يوجد اتصال بالإنترنت</h2>
+<p>تطبيق كارب حاسب يحتاج اتصالاً بالإنترنت للوصول إلى Firebase.<br>تحقق من الاتصال وحاول مجدداً.</p>
+<button onclick="location.reload()">🔄 إعادة المحاولة</button>
+</div></body></html>\`,
+          { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+        );
+      }))
+  );
+});
+`;
+    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(swBlob);
+    navigator.serviceWorker.register(swUrl, { scope: './' })
+      .then(reg => {
+        console.log('[PWA] Service Worker مسجّل ✅', reg.scope);
+        // تحقق من التحديثات كل 60 ثانية
+        setInterval(() => reg.update(), 60000);
+      })
+      .catch(err => console.warn('[PWA] فشل تسجيل SW:', err));
+
+    // 3️⃣ إشعار عند توفر نسخة محدّثة
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (document.visibilityState === 'hidden') return;
+      if (confirm('🔄 يوجد تحديث جديد للتطبيق. هل تريد تحديثه الآن؟')) {
+        location.reload();
+      }
+    });
+  }
 })();
 // SHOW TAB PATCH for new tabs + chart
 
