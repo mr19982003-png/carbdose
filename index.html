@@ -1467,6 +1467,7 @@ function grantAccess(phone, deviceId){
     applyProfileLock();
     // ⚡ تحميل بيانات الحالة تلقائياً برقم هاتفها
     autoLoadPatientProfile(currentUserPhone);
+    setTimeout(backfillSugarShared, 2500);
   }, 400);
   // إظهار زر الإدمن للإدمن فقط
   checkIfAdmin(phone);
@@ -1947,16 +1948,15 @@ const DATA={
   {n:"شربة",            ta:4,  tc:15,u:"ملعقة كبيرة"},
   {n:"طعمية",           ta:3,  tc:15,u:"قطعة"},
   {n:"الدشيشة",         ta:6,  tc:15,u:"ملعقة كبيرة"},
-  {n:"فاصولياء",        ta:2,  tc:15,u:"ملعقة كبيرة"},
+  {n:"فاصولياء",        ta:100,tc:15,u:"جرام"},
   {n:"اللوبياء الخضراء",ta:100,tc:10,u:"جرام"},
   {n:"عدس",             ta:100,tc:60,u:"جرام"},
-  {n:"شربة عدس",        ta:240,tc:10,u:"مل"},
+  {n:"شربة عدس",        ta:240,tc:15,u:"مل"},
   {n:"شربة شوفان",      ta:240,tc:20,u:"مل"},
   {n:"بازين",           ta:100,tc:20,u:"جرام"},
   {n:"شربة جاهزة (ماجي)",ta:350,tc:20,u:"مل"},
   {n:"العصيدة",          ta:100,tc:25,u:"جرام",   nt:"⚠️ هذه النسب تقريبية"},
   {n:"شربة دشيشة",       ta:240,tc:20,u:"مل",     nt:"⚠️ هذه النسب تقريبية"},
-  {n:"شربة العدس",       ta:240,tc:15,u:"مل",     nt:"⚠️ هذه النسب تقريبية"},
   {n:"مكرونة باشاميل",   ta:200,tc:45,u:"جرام",   nt:"⚠️ هذه النسب تقريبية"},
  ],
  fruits:[
@@ -2011,7 +2011,7 @@ const DATA={
  misc:[
   {n:"قصب",            ta:4,  tc:15, u:"ملعقة كبيرة"},
   {n:"بيتزا",          ta:1,  tc:15, u:"⅛ الدائرة الكبيرة"},
-  {n:"فوشار",          ta:100,tc:10, u:"جرام"},
+  {n:"فوشار",          ta:100,tc:63, u:"جرام"},
   {n:"جيلاتي الكوب",   ta:1,  tc:15, u:"مغرفة"},
   {n:"جيلاتي طربوش",   ta:1,  tc:20, u:"قطعة"},
   {n:"البقلاوة",       ta:100,tc:50, u:"جرام"},
@@ -2220,6 +2220,59 @@ async function getPatientData() {
 
 async function savePatientData(data) {
   await window.storage.set(PATIENT_DATA_KEY, JSON.stringify(data), true);
+}
+
+// ══ ربط الحالة برقم هاتفها لمشاركة سجلها مع لوحة الحالات ══
+// المريض: برقم دخوله | الإدمن (يُدخل بيانات الحالات): بمطابقة اسم الحالة مع «بيانات الحالات»
+let _ptPhoneByName = null;
+const _normName = n => (n||'').replace(/\s+/g,' ').trim();
+async function resolvePtPhone(name){
+  try{
+    if(!_isAdminSession && currentUserPhone){
+      const ap = await getApprovedData();
+      const n = normalizePhone(currentUserPhone);
+      return (ap&&ap[n]) ? n : ((ap&&ap[currentUserPhone]) ? currentUserPhone : n);
+    }
+    const nm = _normName(name || profile.name);
+    if(!nm) return null;
+    if(!_ptPhoneByName){
+      _ptPhoneByName = {};
+      const [pd, ap] = await Promise.all([getPatientData(), getApprovedData()]);
+      Object.entries(ap||{}).forEach(([ph,i])=>{ if(i&&i.name) _ptPhoneByName[_normName(i.name)] = ph; });
+      Object.entries(pd||{}).forEach(([ph,d])=>{ if(d&&d.name) _ptPhoneByName[_normName(d.name)] = ph; });
+    }
+    return _ptPhoneByName[nm] || null;
+  }catch(e){ return null; }
+}
+async function syncSugarToShared(date, data, onlyIfMissing){
+  try{
+    const phone = await resolvePtPhone(data.name || profile.name);
+    if(!phone){
+      if(!onlyIfMissing) showToast('⚠️ لم تُشارك مع لوحة الحالات','لا يوجد رقم هاتف مطابق لاسم «'+(data.name||profile.name||'')+'» — أضفه في «بيانات الحالات» بنفس الاسم',6000);
+      return false;
+    }
+    const key = 'ptsugar:'+phone+':'+date;
+    if(onlyIfMissing){ try{ if(await window.storage.get(key,true)) return false; }catch(e){} }
+    const summary = {date, name:data.name||profile.name||'', phone, readings:data.readings||{}, meals:data.meals||{}, saved:data.saved||new Date().toISOString()};
+    await window.storage.set(key, JSON.stringify(summary), true);
+    return true;
+  }catch(e){ return false; }
+}
+// مزامنة سجلات سابقة أُدخلت قبل الإصلاح (مرة لكل جلسة إدمن، دون الكتابة فوق الموجود)
+async function backfillSugarShared(){
+  if(!_isAdminSession) return;
+  try{
+    const ks = await window.storage.list('sugar:');
+    let n = 0;
+    for(const k of ((ks&&ks.keys)||[])){
+      try{
+        const r = await window.storage.get(k); if(!r||!r.value) continue;
+        const d = JSON.parse(r.value);
+        if(await syncSugarToShared(d.date||k.split(':')[1], d, true)) n++;
+      }catch(e){}
+    }
+    if(n) showToast('🔄 تمت مزامنة سجلات سابقة', n+' يوم أصبح ظاهراً في لوحة الحالات', 5000);
+  }catch(e){}
 }
 
 // ── تعبئة قائمة الأرقام في select ──
@@ -3211,6 +3264,7 @@ async function loadClients(){
 function loadClient(c){
   // 🔒 تحميل بيانات حالة أخرى للإدمن فقط
   if (!_isAdminSession) return;
+  _ptPhoneByName=null; // إعادة قراءة أرقام الحالات
   profile.name=c.name||''; profile.icr=c.icr||0;
   profile.target=c.target||120; profile.isf=c.isf||0;
   profile.icrEvening=c.icrEvening||0; profile.isfEvening=c.isfEvening||0;
@@ -3224,6 +3278,7 @@ function loadClient(c){
   const ok=document.getElementById('pf-ok');
   ok.style.display='block'; ok.style.color='#1e40af';
   ok.textContent='✅ تم تحميل بيانات '+profile.name;
+  resolvePtPhone(profile.name).then(ph=>{ if(!ph) showToast('⚠️ '+profile.name+' غير مربوطة برقم هاتف','أضفها في «بيانات الحالات» بنفس الاسم تماماً وإلا لن تظهر سجلاتها في لوحة الحالات',7000); });
   setTimeout(()=>ok.style.display='none',2500);
 }
 
@@ -3457,11 +3512,7 @@ async function saveSugarReadings(){
   const data={date,name:profile.name||'',readings,meals,saved:new Date().toISOString()};
   try{
     await window.storage.set(getSugarKey(),JSON.stringify(data));
-    if (profile.phone) {
-      const sharedKey = 'ptsugar:' + profile.phone + ':' + date;
-      const summary = { date, name: profile.name||'', phone: profile.phone, readings, meals, saved: data.saved };
-      await window.storage.set(sharedKey, JSON.stringify(summary), true);
-    }
+    await syncSugarToShared(date, data);
     if(statusEl){statusEl.style.display='block';statusEl.style.color='#2563eb';statusEl.textContent='✅ تم حفظ القراءات والوجبات بنجاح!';}
     setTimeout(()=>{if(statusEl)statusEl.style.display='none';},2500);
 
@@ -3540,11 +3591,7 @@ async function quickSaveSugarReading(){
 
   try{
     await window.storage.set(sugarKey,JSON.stringify(data));
-    if(profile.phone){
-      const sharedKey='ptsugar:'+profile.phone+':'+today;
-      const summary={date:today,name:profile.name||'',phone:profile.phone,readings:data.readings,meals:data.meals,saved:data.saved};
-      await window.storage.set(sharedKey,JSON.stringify(summary),true);
-    }
+    await syncSugarToShared(today, data);
     closeQuickBs();
     showToast('✅ تم حفظ القراءة',`${val} mg/dL — تُحفظ تلقائياً في سجل القراءات والوجبات`,3500);
 
@@ -4350,6 +4397,7 @@ async function saveToSugarLog(silent){
 
   try{
     await window.storage.set(sugarKey,JSON.stringify(data));
+    await syncSugarToShared(today, data);
 
     // If sugar tab is already showing today's date, refresh the form fields
     const bsDate=document.getElementById('bs-date');
